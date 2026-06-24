@@ -1,60 +1,37 @@
 /**
- * V7.0 - 强力伪装版
- * 修复：注入完整的浏览器特征头，绕过 High Risk Action
+ * V8.0 - 绕过 Cloudflare 专用版
+ * 确保你的抓包数据里必须包含 cf_clearance 字段，否则 100% 报错
  */
 
 const NS_HEADER_KEY = "NS_NodeseekHeaders";
 
-function startSign() {
+function run() {
   const raw = $persistentStore.read(NS_HEADER_KEY);
   if (!raw) {
-    $notification.post("NS签到", "失败", "请先在浏览器打开个人信息页抓包。");
+    $notification.post("NS签到 [V8.0]", "失败", "请确保抓包数据中包含 cf_clearance Cookie");
     return;
   }
 
   const savedHeaders = JSON.parse(raw);
+  
+  // 必须确保 Cookie 字符串中包含 cf_clearance
+  if (!savedHeaders.Cookie || !savedHeaders.Cookie.includes("cf_clearance")) {
+     $notification.post("NS签到 [V8.0]", "Cookie 无效", "当前 Cookie 缺少 cf_clearance，无法绕过 CF 防护。");
+     return;
+  }
 
-  // 核心修复：手动强化请求头，模拟真实浏览器访问
-  const headers = {
-    ...savedHeaders,
-    "Content-Type": "application/json",
-    "Referer": "https://www.nodeseek.com/board",
-    "Origin": "https://www.nodeseek.com",
-    "Sec-Fetch-Dest": "empty",
-    "Sec-Fetch-Mode": "cors",
-    "Sec-Fetch-Site": "same-origin",
-    "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1"
-  };
-
-  const options = {
+  $httpClient.post({
     url: "https://www.nodeseek.com/api/attendance",
-    method: "POST",
-    headers: headers,
-    body: JSON.stringify({}), // 保持空对象
-    timeout: 5000
-  };
-
-  $httpClient.post(options, (error, response, data) => {
+    headers: savedHeaders,
+    body: ""
+  }, (error, response, data) => {
     if (error) {
       $notification.post("NS签到", "网络错误", String(error));
     } else {
-      console.log("NS服务器状态: " + response.status);
-      console.log("NS服务器响应: " + data);
-      
-      // 成功解析的判断
-      if (response.status === 200 || response.status === 400) { // 有时失败也会有JSON返回
-        try {
-          const obj = JSON.parse(data);
-          $notification.post(`NS签到 (${response.status})`, "", String(obj.message || data));
-        } catch(e) {
-          $notification.post("NS签到", "解析失败", String(data));
-        }
-      } else {
-        $notification.post("NS签到", "触发风控", "状态码: " + response.status);
-      }
+      $notification.post(`状态码: ${response.status}`, "响应内容", data.substring(0, 50));
     }
     $done();
   });
 }
 
-startSign();
+run();
