@@ -1,30 +1,16 @@
-// NS论坛签到 (Loon 适配版)
+// NS论坛签到 (Loon 完美适配版)
 const NS_HEADER_KEY = "NS_NodeseekHeaders";
 const isGetHeader = typeof $request !== "undefined";
 
 const NEED_KEYS = [
-  "Connection",
-  "Accept-Encoding",
-  "Priority",
-  "Content-Type",
-  "Origin",
-  "refract-sign",
-  "User-Agent",
-  "refract-key",
-  "Sec-Fetch-Mode",
-  "Cookie",
-  "Host",
-  "Referer",
-  "Accept-Language",
-  "Accept",
+  "Connection", "Accept-Encoding", "Priority", "Content-Type", "Origin",
+  "refract-sign", "User-Agent", "refract-key", "Sec-Fetch-Mode",
+  "Cookie", "Host", "Referer", "Accept-Language", "Accept"
 ];
 
 function pickNeedHeaders(src = {}) {
   const dst = {};
-  const get = (name) =>
-    src[name] ??
-    src[name.toLowerCase()] ??
-    src[name.toUpperCase()];
+  const get = (name) => src[name] ?? src[name.toLowerCase()] ?? src[name.toUpperCase()];
   for (const k of NEED_KEYS) {
     const v = get(k);
     if (v !== undefined) dst[k] = v;
@@ -33,70 +19,51 @@ function pickNeedHeaders(src = {}) {
 }
 
 if (isGetHeader) {
-  const allHeaders = $request.headers || {};
-  const picked = pickNeedHeaders(allHeaders);
-
+  const picked = pickNeedHeaders($request.headers || {});
   if (!picked || Object.keys(picked).length === 0) {
-    console.log("[NS] picked headers empty:", JSON.stringify(allHeaders));
-    $notification.post("NS Headers 获取失败", "", "未获取到指定请求头，请重新再试一次。");
-    $done({});
+    $notification.post("NS Headers 获取失败", "", "未获取到指定请求头。");
   } else {
     // Loon 使用 $persistentStore.write
-    const ok = $persistentStore.write(JSON.stringify(picked), NS_HEADER_KEY);
-    console.log("[NS] saved picked headers:", JSON.stringify(picked));
-    if (ok) {
-      $notification.post("NS Headers 获取成功", "", "指定请求头已持久化保存。");
+    if ($persistentStore.write(JSON.stringify(picked), NS_HEADER_KEY)) {
+      $notification.post("NS Headers 获取成功", "Nodeseek", "已保存请求头，签到脚本可正常运行。");
     } else {
-      $notification.post("NS Headers 保存失败", "", "写入持久化存储失败，请检查配置。");
+      $notification.post("NS Headers 保存失败", "", "写入数据失败。");
     }
-    $done({});
   }
+  $done({});
 } else {
-  // 读取已保存指定 headers
-  const raw = $persistentStore.load(NS_HEADER_KEY);
+  // 读取已保存的数据，Loon 使用 $persistentStore.read
+  const raw = $persistentStore.read(NS_HEADER_KEY);
   if (!raw) {
-    $notification.post("NS签到结果", "无法签到", "本地没有已保存的请求头，请先抓包访问一次 个人页面。");
+    $notification.post("NS签到失败", "", "本地没有已保存的请求头，请先抓包访问个人页面。");
     $done();
+    return;
   }
 
   let savedHeaders = {};
   try {
-    savedHeaders = JSON.parse(raw) || {};
+    savedHeaders = JSON.parse(raw);
   } catch (e) {
-    $notification.post("NS签到结果", "无法签到", "本地保存的请求头数据损坏。");
+    $notification.post("NS签到错误", "", "请求头数据解析失败。");
     $done();
+    return;
   }
 
-  const myRequest = {
-    url: `https://www.nodeseek.com/api/attendance?random=true`,
-    method: "POST",
+  $httpClient.post({
+    url: "https://www.nodeseek.com/api/attendance?random=true",
     headers: savedHeaders,
     body: ""
-  };
-
-  // Loon 使用 $httpClient.post
-  $httpClient.post(myRequest, (error, response, data) => {
+  }, (error, response, data) => {
     if (error) {
-      $notification.post("NS签到结果", "请求错误", error);
-      $done();
-      return;
-    }
-
-    const status = response.status;
-    let msg = "";
-    try {
-      const obj = JSON.parse(data);
-      msg = obj?.message ? String(obj.message) : "";
-    } catch (e) {}
-
-    if (status === 403) {
-      $notification.post("NS签到结果", "403 风控", msg || data);
-    } else if (status === 500) {
-      $notification.post("NS签到结果", "500 服务器错误", msg || data);
-    } else if (status >= 200 && status < 300) {
-      $notification.post("NS签到结果", "签到成功", msg || "成功");
+      $notification.post("NS签到请求失败", "", String(error));
     } else {
-      $notification.post("NS签到结果", `请求异常 ${status}`, msg || data);
+      try {
+        const obj = JSON.parse(data);
+        const msg = obj?.message || data;
+        $notification.post("NS签到结果", `状态码: ${response.status}`, String(msg));
+      } catch (e) {
+        $notification.post("NS签到结果", `状态码: ${response.status}`, String(data));
+      }
     }
     $done();
   });
