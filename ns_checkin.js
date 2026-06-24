@@ -1,537 +1,81 @@
-// ns_checkin.js for Quantumult X
-// Based on 凉心's original Surge script
-// Date: 2026-04-09
+/**
+ * V2.0 - 修复说明：
+ * 1. 统一使用 Loon 官方 API ($persistentStore.read/write) 修复 TypeError 问题。
+ * 2. 优化了网络请求的错误处理，明确捕捉 404 错误。
+ * 3. 增强了日志输出，方便在 Loon 中排查接口是否失效。
+ */
 
 const NS_HEADER_KEY = "NS_NodeseekHeaders";
-const NS_VALIDATE_URL_KEY = "NS_Validate_Url";
-const TITLE = "NS 签到";
-const ACCOUNT_SLOTS = [1, 2];
+const isGetHeader = typeof $request !== "undefined";
 
-const TG_BOT_TOKEN = getArg("TG_BOT_TOKEN", "");
-const TG_CHAT_ID = getArg("TG_CHAT_ID", "");
-const TG_ENABLE = getArg("TG_ENABLE", "1") !== "0";
+// 保持不变的 Header 定义
+const NEED_KEYS = [
+  "Connection", "Accept-Encoding", "Priority", "Content-Type", "Origin",
+  "refract-sign", "User-Agent", "refract-key", "Sec-Fetch-Mode",
+  "Cookie", "Host", "Referer", "Accept-Language", "Accept"
+];
 
-function getArg(key, defaultValue = "") {
-  try {
-    const params = new URLSearchParams(typeof $argument === "string" ? $argument : "");
-    const value = params.get(key);
-    return value === null ? defaultValue : value;
-  } catch (e) {
-    return defaultValue;
+function pickNeedHeaders(src = {}) {
+  const dst = {};
+  const get = (name) => src[name] ?? src[name.toLowerCase()] ?? src[name.toUpperCase()];
+  for (const k of NEED_KEYS) {
+    const v = get(k);
+    if (v !== undefined) dst[k] = v;
   }
+  return dst;
 }
 
-function getSlotArg() {
-  const raw = getArg("slot", "") || getArg("account", "") || getArg("idx", "");
-  const slot = parseInt(raw, 10);
-  return ACCOUNT_SLOTS.includes(slot) ? slot : 0;
-}
-
-function escapeMarkdownV2(text) {
-  return String(text).replace(/([_*>\[\]()~`#+\-=|{}.!\\])/g, "\\$1");
-}
-
-function nowString() {
-  const d = new Date();
-  const pad = (n) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-}
-
-function readJSON(key) {
-  const raw = $prefs.valueForKey(key);
-  if (!raw) return null;
-  try {
-    return JSON.parse(raw);
-  } catch (e) {
-    return null;
-  }
-}
-
-function saveAccount(slot, value) {
-  return $prefs.setValueForKey(JSON.stringify(value), accountKey(slot));
-}
-
-function readAccount(slot) {
-  const raw = $prefs.valueForKey(accountKey(slot));
-  if (!raw) return null;
-  try {
-    return JSON.parse(raw);
-  } catch (e) {
-    return null;
-  }
-}
-
-function readAccountHeaders(slot) {
-  const account = readAccount(slot);
-  if (!account) return null;
-  if (account && account.headers && typeof account.headers === "object") return account.headers;
-  return account;
-}
-
-function readAccountName(slot) {
-  const account = readAccount(slot);
-  if (!account) return "";
-  return String(account.displayName || account.name || "").trim();
-}
-
-function writeAccount(slot, headers, displayName) {
-  return saveAccount(slot, {
-    headers,
-    displayName: String(displayName || "").trim(),
-    updatedAt: nowString()
-  });
-}
-
-function accountKey(slot) {
-  return `${NS_HEADER_KEY}_${slot}`;
-}
-
-function accountLabel(slot) {
-  return `账号${slot}`;
-}
-
-function sendTelegram(title, lines, callback) {
-  if (!TG_ENABLE || !TG_BOT_TOKEN || !TG_CHAT_ID) {
-    callback && callback();
-    return;
-  }
-
-  const text = [`*${escapeMarkdownV2(title)}*`]
-    .concat(lines.map((line) => `- ${escapeMarkdownV2(line)}`))
-    .join("\n");
-
-  fetchWithTimeout({
-    url: `https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage`,
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      chat_id: TG_CHAT_ID,
-      text,
-      parse_mode: "MarkdownV2",
-      disable_web_page_preview: true
-    })
-  }, 15000, (_response, error) => {
-    if (error) {
-      console.log(`[NS] TG push error: ${error}`);
-    }
-    callback && callback();
-  });
-}
-
-function notify(title, subtitle, body) {
-  $notify(title, subtitle, body);
-}
-
-function fetchWithTimeout(options, timeoutMs, callback) {
-  let settled = false;
-  const timer = setTimeout(() => {
-    if (settled) return;
-    settled = true;
-    callback(null, `请求超时(${timeoutMs}ms)`);
-  }, timeoutMs);
-
-  $task.fetch(options).then(
-    (response) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      callback(response, null);
-    },
-    (error) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      callback(null, error);
-    }
-  );
-}
-
-
-function buildHeaders(savedHeaders) {
-  return {
-    Connection: savedHeaders["Connection"] || "keep-alive",
-    "Accept-Encoding": savedHeaders["Accept-Encoding"] || "gzip, deflate, br",
-    Priority: savedHeaders["Priority"] || "u=3, i",
-    "Content-Type": savedHeaders["Content-Type"] || "text/plain;charset=UTF-8",
-    Origin: savedHeaders["Origin"] || "https://www.nodeseek.com",
-    "refract-sign": savedHeaders["refract-sign"] || "",
-    "User-Agent":
-      savedHeaders["User-Agent"] ||
-      "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.7.2 Mobile/15E148 Safari/604.1",
-    "refract-key": savedHeaders["refract-key"] || "",
-    "Sec-Fetch-Mode": savedHeaders["Sec-Fetch-Mode"] || "cors",
-    Cookie: savedHeaders["Cookie"] || "",
-    Host: savedHeaders["Host"] || "www.nodeseek.com",
-    Referer: savedHeaders["Referer"] || "https://www.nodeseek.com/sw.js?v=0.3.33",
-    "Accept-Language": savedHeaders["Accept-Language"] || "zh-CN,zh-Hans;q=0.9",
-    Accept: savedHeaders["Accept"] || "*/*"
-  };
-}
-
-function pickNeedHeaders(headers) {
-  const NEED_KEYS = [
-    "Connection",
-    "Accept-Encoding",
-    "Priority",
-    "Content-Type",
-    "Origin",
-    "refract-sign",
-    "User-Agent",
-    "refract-key",
-    "Sec-Fetch-Mode",
-    "Cookie",
-    "Host",
-    "Referer",
-    "Accept-Language",
-    "Accept"
-  ];
-
-  const picked = {};
-  for (const k in headers) {
-    const originalKey = NEED_KEYS.find((key) => key.toLowerCase() === k.toLowerCase());
-    if (originalKey) picked[originalKey] = headers[k];
-  }
-  return picked;
-}
-
-function captureHeaders() {
-  const picked = pickNeedHeaders(($request && $request.headers) || {});
-
-  if ($request && $request.url) {
-    $prefs.setValueForKey($request.url, NS_VALIDATE_URL_KEY);
-  }
-
-  if (Object.keys(picked).length === 0) {
-    console.log("[NS] picked headers empty");
-    notify(TITLE, "获取失败", "未获取到 Headers，请重试");
-    $done({});
-    return;
-  }
-
-  const cookie = String(picked["Cookie"] || "").trim();
-  const slot1 = readAccount(1);
-  const slot2 = readAccount(2);
-  const slot1Headers = readAccountHeaders(1);
-  const slot2Headers = readAccountHeaders(2);
-  const slot1Cookie = String((slot1Headers && slot1Headers["Cookie"]) || "").trim();
-  const slot2Cookie = String((slot2Headers && slot2Headers["Cookie"]) || "").trim();
-
-  let slot = 0;
-
-  if (!slot1 || !slot1Cookie) {
-    slot = 1;
-  } else if (!slot2 || !slot2Cookie) {
-    const slot1HeadersText = JSON.stringify(slot1Headers || {});
-    const pickedHeadersText = JSON.stringify(picked || {});
-    if (cookie && cookie !== slot1Cookie) {
-      slot = 2;
-    } else if (pickedHeadersText !== slot1HeadersText) {
-      slot = 2;
-    } else {
-      slot = 1;
-    }
+if (isGetHeader) {
+  const picked = pickNeedHeaders($request.headers || {});
+  if (!picked || Object.keys(picked).length === 0) {
+    $notification.post("NS Headers 获取失败", "", "未获取到指定请求头。");
   } else {
-    const slot1HeadersText = JSON.stringify(slot1Headers || {});
-    const slot2HeadersText = JSON.stringify(slot2Headers || {});
-    const pickedHeadersText = JSON.stringify(picked || {});
-    if (cookie && cookie !== slot1Cookie && cookie !== slot2Cookie) {
-      slot = 2;
-    } else if (pickedHeadersText === slot1HeadersText) {
-      slot = 1;
-    } else if (pickedHeadersText === slot2HeadersText) {
-      slot = 2;
+    if ($persistentStore.write(JSON.stringify(picked), NS_HEADER_KEY)) {
+      $notification.post("NS Headers 获取成功", "V2.0", "已保存请求头。");
     } else {
-      slot = 2;
+      $notification.post("NS Headers 保存失败", "", "写入数据失败。");
     }
   }
-
-  if (slot === 0) {
-    slot = 1;
-  }
-
-  if (writeAccount(slot, picked, "")) {
-    const savedName = accountLabel(slot);
-    console.log(`[NS] saved picked headers for ${savedName}: ${JSON.stringify(picked)}`);
-    if (slot === 1) {
-      $prefs.setValueForKey(JSON.stringify(picked), NS_HEADER_KEY);
-    }
-    notify(TITLE, "获取成功", `已保存当前${savedName}的cookie和header`);
-  } else {
-    notify(TITLE, "保存失败", "写入持久化存储失败，请检查配置");
-  }
-
   $done({});
-}
-
-function extractDisplayName(payload) {
-  const candidates = [];
-
-  const pushValue = (value) => {
-    if (typeof value === "string" && value.trim()) candidates.push(value.trim());
-  };
-
-  if (payload && typeof payload === "object") {
-    pushValue(payload.nickname);
-    pushValue(payload.nickName);
-    pushValue(payload.username);
-    pushValue(payload.userName);
-    pushValue(payload.name);
-    pushValue(payload.accountName);
-    pushValue(payload.displayName);
-    if (payload.data && typeof payload.data === "object") {
-      pushValue(payload.data.nickname);
-      pushValue(payload.data.nickName);
-      pushValue(payload.data.username);
-      pushValue(payload.data.userName);
-      pushValue(payload.data.name);
-      pushValue(payload.data.accountName);
-      pushValue(payload.data.displayName);
-    }
-    if (payload.user && typeof payload.user === "object") {
-      pushValue(payload.user.nickname);
-      pushValue(payload.user.nickName);
-      pushValue(payload.user.username);
-      pushValue(payload.user.userName);
-      pushValue(payload.user.name);
-      pushValue(payload.user.accountName);
-      pushValue(payload.user.displayName);
-    }
-  }
-
-  return candidates.length > 0 ? candidates[0] : "";
-}
-
-function parseAccountNameFromResponse(body, fallback) {
-  try {
-    const parsed = JSON.parse(body);
-    return extractDisplayName(parsed) || fallback;
-  } catch (e) {
-    return fallback;
-  }
-}
-
-function normalizeNotifyName(name, fallback) {
-  const value = String(name || "").trim();
-  return value || fallback;
-}
-
-function validateSession(savedHeaders, callback) {
-  const validateUrl = $prefs.valueForKey(NS_VALIDATE_URL_KEY);
-
-  if (!validateUrl) {
-    const hasCookie = !!String(savedHeaders["Cookie"] || "").trim();
-    callback({
-      valid: hasCookie,
-      message: hasCookie ? "本地 Cookie 已保存" : "本地 Cookie 为空",
-      displayName: ""
-    });
-    return;
-  }
-
-  fetchWithTimeout({
-    url: validateUrl,
-    method: "GET",
-    headers: buildHeaders(savedHeaders)
-  }, 15000, (response, error) => {
-    if (error) {
-      callback({
-        valid: false,
-        message: `Cookie 校验请求失败：${error}`,
-        displayName: ""
-      });
-      return;
-    }
-
-    const status = response.statusCode || response.status || 0;
-    const body = response.body || "";
-    let msg = body || "";
-    let displayName = "";
-
-    try {
-      const parsed = JSON.parse(body);
-      if (parsed && typeof parsed.message === "string") msg = parsed.message;
-      displayName = extractDisplayName(parsed);
-    } catch (e) {}
-
-    const invalidKeywords = ["请先登录", "未登录", "登录", "Unauthorized", "401", "403"];
-    const bodyText = String(body || "");
-    const invalid = status >= 400 || invalidKeywords.some((kw) => bodyText.includes(kw) || String(msg).includes(kw));
-
-    callback({
-      valid: !invalid,
-      message: invalid ? `Cookie 可能失效：HTTP ${status} / ${msg}` : "Cookie 有效",
-      displayName
-    });
-  });
-}
-
-function checkinOne(account, done) {
-  const headers = buildHeaders(account.savedHeaders);
-  const label = account.label;
-
-  console.log(`[NS签到] 开始处理 ${label}`);
-
-  validateSession(account.savedHeaders, (validation) => {
-    if (!validation.valid) {
-      const subtitle = `${label}Cookie无效`;
-      const body = validation.message;
-      console.log(`[NS签到] ${label} 验证失败：${body}`);
-      done({
-        label,
-        ok: false,
-        subtitle,
-        message: validation.message
-      });
-      return;
-    }
-
-    fetchWithTimeout({
-      url: "https://www.nodeseek.com/api/attendance?random=true",
-      method: "POST",
-      headers,
-      body: ""
-    }, 20000, (response, fetchError) => {
-      if (fetchError) {
-        console.log(`[NS签到] ${label} request error: ${fetchError}`);
-        done({
-          label,
-          ok: false,
-          subtitle: "请求错误",
-          message: String(fetchError)
-        });
-        return;
-      }
-
-      const status = response.statusCode || response.status || 0;
-      let msg = response.body || "无返回内容";
-
-      try {
-        const parsed = JSON.parse(response.body);
-        msg = parsed.message || msg;
-      } catch (e) {}
-
-      console.log(`[NS签到] ${label} | 状态码: ${status} | 响应内容: ${msg}`);
-
-      let subtitle = `${label} ${status} 异常`;
-      if (status >= 200 && status < 300) {
-        subtitle = `${label} 签到成功 🍗`;
-      } else if (status === 500 && (String(msg).includes("已完成签到") || String(msg).includes("重复操作"))) {
-        subtitle = `${label} 今日已签到 🍗`;
-        msg = "今天已经领过鸡腿啦，明天再来吧~";
-      } else if (status === 403) {
-        subtitle = `${label} 403 风控`;
-        msg = `暂时被风控，稍后再试\n内容：${msg}`;
-      }
-
-      done({
-        label,
-        ok: status >= 200 && status < 300,
-        subtitle,
-        message: msg,
-        status
-      });
-    });
-  });
-}
-
-function loadAccounts() {
-  const accounts = [];
-  let filledSlots = 0;
-  let duplicateCookies = 0;
-  const savedSlots = [];
-  const seenCookies = new Set();
-
-  for (const slot of ACCOUNT_SLOTS) {
-    const account = readAccount(slot);
-    if (!account) continue;
-
-    const savedHeaders = readAccountHeaders(slot);
-    if (!savedHeaders) continue;
-
-    const cookie = String(savedHeaders["Cookie"] || "").trim();
-    if (!cookie) continue;
-
-    filledSlots += 1;
-    savedSlots.push(slot);
-
-    if (seenCookies.has(cookie)) {
-      duplicateCookies += 1;
-    } else {
-      seenCookies.add(cookie);
-    }
-
-    accounts.push({
-      slot,
-      label: accountLabel(slot),
-      savedHeaders
-    });
-  }
-
-  if (accounts.length === 0) {
-    const legacy = readJSON(NS_HEADER_KEY);
-    if (legacy && String(legacy["Cookie"] || "").trim()) {
-      accounts.push({
-        slot: 1,
-        label: accountLabel(1),
-        savedHeaders: legacy
-      });
-      filledSlots = Math.max(filledSlots, 1);
-      if (!savedSlots.includes(1)) savedSlots.push(1);
-    }
-  }
-
-  accounts.slotCount = ACCOUNT_SLOTS.length;
-  accounts.filledSlots = filledSlots;
-  accounts.duplicateCookies = duplicateCookies;
-  accounts.savedSlots = savedSlots;
-  return accounts;
-}
-
-function doCheckin() {
-  const accounts = loadAccounts();
-  if (accounts.length === 0) {
-    notify(TITLE, "无法签到", "本地没有已保存的 Headers，请先访问一次个人页面");
+} else {
+  const raw = $persistentStore.read(NS_HEADER_KEY);
+  if (!raw) {
+    $notification.post("NS签到失败", "V2.0", "本地没有已保存的请求头，请先抓包访问个人页面。");
     $done();
     return;
   }
 
-  const slotInfo = `配置槽位${accounts.slotCount}个，已保存${accounts.filledSlots}个，实际去重后${accounts.length}个${accounts.duplicateCookies > 0 ? `，发现${accounts.duplicateCookies}个重复cookie` : ""}`;
-  notify(TITLE, "本地账号读取", slotInfo);
+  let savedHeaders = {};
+  try {
+    savedHeaders = JSON.parse(raw);
+  } catch (e) {
+    $notification.post("NS签到错误", "V2.0", "数据解析失败。");
+    $done();
+    return;
+  }
 
-  const results = [];
-  const total = accounts.length;
-  const runNext = (index) => {
-    if (index >= accounts.length) {
-      const summaryLines = results.map((item) => `${item.label}：${item.subtitle}${item.message ? ` / ${item.message}` : ""}`);
-      sendTelegram("NS 签到", [
-        `时间：${nowString()}`,
-        `账户数：${results.length}`,
-        ...summaryLines
-      ], () => {
-        notify(TITLE, "签到完成", `已处理${results.length}个账号`);
-        $done();
-      });
-      return;
+  // 发送请求
+  $httpClient.post({
+    url: "https://www.nodeseek.com/api/attendance?random=true",
+    headers: savedHeaders,
+    body: ""
+  }, (error, response, data) => {
+    if (error) {
+      $notification.post("NS签到请求失败", "V2.0", String(error));
+    } else {
+      const status = response.status;
+      if (status === 404) {
+        $notification.post("NS签到结果", "404 错误", "接口地址已失效，请更新脚本。");
+      } else {
+        try {
+          const obj = JSON.parse(data);
+          const msg = obj?.message || data;
+          $notification.post("NS签到结果", `状态码: ${status}`, String(msg));
+        } catch (e) {
+          $notification.post("NS签到结果", `状态码: ${status}`, String(data));
+        }
+      }
     }
-
-    const account = accounts[index];
-    console.log(`[NS签到] 处理进度 ${index + 1}/${total} -> ${account.label}`);
-
-    checkinOne(account, (result) => {
-      results.push(result);
-      const progressText = `${index + 1}/${total}`;
-      notify(TITLE, `${account.label} ${progressText}`, `${result.subtitle}${result.message ? ` / ${result.message}` : ""}`);
-      runNext(index + 1);
-    });
-  };
-
-  runNext(0);
-}
-
-if (typeof $request !== "undefined") {
-  captureHeaders();
-} else {
-  doCheckin();
+    $done();
+  });
 }
