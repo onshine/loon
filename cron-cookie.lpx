@@ -1,5 +1,5 @@
 #!name=Paperclip · Cookie 抓取合集
-#!desc=一键抓取 paperclip 仓库全部签到脚本的 Cookie（含已归档,共 25 个），每个脚本一个独立开关（默认全关，按需打开）。仅含「抓取」规则，不含 cron 签到——cron 仍按各脚本 README 单独配置。打开对应开关后，进入相应 App/小程序的签到页触发即可，收到「✅ <名称> Cookie 获取成功」通知即成功。
+#!desc=一键抓取 paperclip 仓库全部签到脚本的 Cookie（含已归档,共 25 个），每个脚本一个独立开关（默认全关，按需打开）。含「抓取」规则，含 cron 签到——cron可以集中管理。打开对应开关后，进入相应 App/小程序的签到页触发即可，收到「✅ <名称> Cookie 获取成功」通知即成功。
 #!author=MaYIHEI
 #!homepage=https://github.com/MaYIHEI/paperclip
 #!icon=https://raw.githubusercontent.com/fmz200/wool_scripts/main/icons/author/ZenMoFeiShi.png
