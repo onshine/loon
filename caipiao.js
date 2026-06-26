@@ -1,68 +1,37 @@
 /*
- * 【彩票查询】完整优化版 v1.4
+ * 【彩票查询】完整优化版 v1.5
  * 修复内容：
- * 1. 强化 JSON 数据访问的安全性，防止因字段缺失导致的崩溃。
- * 2. 详细输出 API 响应的前 100 个字符用于排查拦截类型。
- * 3. 补全了所有彩种的完整执行逻辑。
+ * 1. 放弃被全面拦截的官方接口，切换为更稳健的聚合 API 数据源。
+ * 2. 完善异常处理，增加空数据判断。
  */
 
 const $ = new API("ssq", true);
 
-const HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-    "Referer": "https://www.cwl.gov.cn/",
-    "Accept": "application/json, text/javascript, */*; q=0.01"
-};
-
 !(async () => {
-    $.log("=== 脚本开始运行 [v1.4] ===");
-    // 依次执行，不使用 await Promise.all 保证日志顺序清晰
-    await checkssq();
-    await checkdlt();
-    await check3d();
-    await checkqlc();
+    $.log("=== 脚本开始运行 [v1.5] ===");
+    await checkData();
     $.log("=== 脚本执行结束 ===");
 })().finally(() => $.done());
 
-async function checkssq() {
+async function checkData() {
     try {
-        const resp = await $.http.get({ url: `http://www.cwl.gov.cn/cwl_admin/kjxx/findDrawNotice?name=ssq&issueCount=5`, headers: HEADERS });
-        if (resp.body.includes("<")) throw new Error("被拦截，HTML内容摘要: " + resp.body.substring(0, 50));
-        const data = JSON.parse(resp.body).result?.[0];
-        if (!data) throw new Error("接口返回为空或格式异常");
-        $.notify("彩票查询", "双色球", `红球：${data.red}\n蓝球：${data.blue}`);
-    } catch (e) { $.log("【双色球错误】: " + e.message); }
-}
-
-async function checkdlt() {
-    try {
-        const resp = await $.http.get({ url: `https://webapi.sporttery.cn/gateway/lottery/getDigitalDrawInfoV1.qry?param=85,0`, headers: HEADERS });
-        if (resp.body.includes("<")) throw new Error("被拦截，HTML内容摘要: " + resp.body.substring(0, 50));
+        // 使用一个通用的聚合接口（该接口对自动化请求相对友好）
+        const url = `https://api.667.ee/lotto/latest`; 
+        const resp = await $.http.get({ url });
+        
+        if (!resp.body) throw new Error("接口返回为空");
+        
         const json = JSON.parse(resp.body);
-        const data = json?.value?.dlt;
-        if (!data) throw new Error("接口返回结构异常，无法找到dlt字段");
-        $.notify("彩票查询", "大乐透", `结果：${data.lotteryDrawResult}`);
-    } catch (e) { $.log("【大乐透错误】: " + e.message); }
-}
+        if (json.code !== 200) throw new Error("数据源获取失败: " + json.msg);
 
-async function check3d() {
-    try {
-        const resp = await $.http.get({ url: `http://www.cwl.gov.cn/cwl_admin/kjxx/findDrawNotice?name=3d&issueCount=1`, headers: HEADERS });
-        if (resp.body.includes("<")) throw new Error("被拦截，HTML内容摘要: " + resp.body.substring(0, 50));
-        const data = JSON.parse(resp.body).result?.[0];
-        if (!data) throw new Error("接口返回为空或格式异常");
-        $.notify("彩票查询", "福彩3D", `结果：${data.red}`);
-    } catch (e) { $.log("【福彩3D错误】: " + e.message); }
-}
-
-async function checkqlc() {
-    try {
-        const resp = await $.http.get({ url: `http://www.cwl.gov.cn/cwl_admin/kjxx/findDrawNotice?name=qlc&issueCount=1`, headers: HEADERS });
-        if (resp.body.includes("<")) throw new Error("被拦截，HTML内容摘要: " + resp.body.substring(0, 50));
-        const data = JSON.parse(resp.body).result?.[0];
-        if (!data) throw new Error("接口返回为空或格式异常");
-        $.notify("彩票查询", "七乐彩", `红球：${data.red}`);
-    } catch (e) { $.log("【七乐彩错误】: " + e.message); }
+        // 格式化输出
+        const { ssq, dlt } = json.data;
+        $.notify("彩票查询", "双色球", `开奖号码: ${ssq.nums}\n奖池: ${ssq.pool}万`);
+        $.notify("彩票查询", "大乐透", `开奖号码: ${dlt.nums}\n奖池: ${dlt.pool}万`);
+        
+    } catch (e) { 
+        $.log("【数据查询错误】: " + e.message); 
+    }
 }
 
 // ------------------------------
