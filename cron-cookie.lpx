@@ -132,8 +132,8 @@ http-response ^https:\/\/scrm-b\.zjian\.net\/api\/member\/(minaLogin|find) tag=�
 cron "40 8 * * *" script-path=https://raw.githubusercontent.com/MaYIHEI/paperclip/refs/heads/main/miniprogram/wedome/wedome.js, tag=味多美签到, enable={wedome}
 
 # 特来电
-http-request ^https:\/\/sgi\.teld\.cc\/api\/invoke tag=特来电 Cookie, script-path=https://raw.githubusercontent.com/MaYIHEI/paperclip/refs/heads/main/miniprogram/teld/teld.js, requires-body=false, enable={teld}
-cron "07 8 * * *" script-path=https://raw.githubusercontent.com/MaYIHEI/paperclip/refs/heads/main/miniprogram/teld/teld.js, tag=特来电签到, enable={teld}
+http-request ^https:\/\/sgi\.teld\.cc\/api\/invoke tag=特来电 Cookie, script-path=https://gist.githubusercontent.com/onshine/fbb8c1217de7345a653aba3a775d87e5/raw/telda.js, requires-body=false, enable={teld}
+cron "07 8 * * *" script-path=https://gist.githubusercontent.com/onshine/fbb8c1217de7345a653aba3a775d87e5/raw/telda.js, tag=特来电签到, enable={teld}
 
 # 北京华联
 http-request ^https:\/\/a\.china-smartech\.com\/restful\/mall\/\d+\/checkInForm tag=北京华联 Cookie, script-path=https://raw.githubusercontent.com/MaYIHEI/paperclip/refs/heads/main/miniprogram/bhg/bhg.js, requires-body=false, enable={bhg}
